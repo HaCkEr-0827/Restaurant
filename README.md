@@ -83,7 +83,7 @@ A powerful Restaurant API built using Django and Django Rest Framework. It allow
 1. **Clone the repo:**
 
 ```bash
-git clone https://github.com/yourusername/restaurant-api.git
+git clone https://github.com/HaCkEr-0827/Restaurant.git
 cd restaurant-api
 ```
 
