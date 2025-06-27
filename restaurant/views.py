@@ -13,45 +13,115 @@ from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAuthenticate
 from .permissions import IsAdminRole
 from datetime import time as dtime, datetime
 from django.db.models import Count
+from .models import OTPCode
+from .utils import generate_otp, save_otp_to_cache
 
 
 class SignUpView(APIView):
     @swagger_auto_schema(
+        operation_description="Telefon raqamga OTP kod yuborish.",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
+            required=["phone_number"],
             properties={
-                'phone_number': openapi.Schema(type=openapi.TYPE_STRING),
-                'name': openapi.Schema(type=openapi.TYPE_STRING),
-                'password': openapi.Schema(type=openapi.TYPE_STRING),
+                'phone_number': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    example='+998901234567',
+                    description='Foydalanuvchi telefon raqami'
+                ),
             },
-            required=['phone_number', 'name', 'password']
         ),
+        responses={
+            200: openapi.Response(description='OTP yuborildi'),
+            400: openapi.Response(description='Xatolik: telefon raqami yuborilmagan yoki noto‘g‘ri')
+        }
     )
     def post(self, request):
         phone = request.data.get('phone_number')
+        if not phone:
+            return Response({'error': 'Telefon raqami majburiy'}, status=status.HTTP_400_BAD_REQUEST)
+
+        otp_code = generate_otp()  # Masalan, 6 xonali random kod
+        OTPCode.objects.create(phone_number=phone, code=otp_code)
+
+        print(f"📲 OTP kod: {otp_code} → {phone}")  # Aslida SMS orqali yuboriladi
+
+        return Response({'message': 'OTP yuborildi'}, status=status.HTTP_200_OK)
+
+class VerifyOTPView(APIView):
+    @swagger_auto_schema(
+        operation_description="OTP kodni tasdiqlab foydalanuvchini ro'yxatdan o'tkazish.",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            required=['phone_number', 'otp', 'name', 'password'],
+            properties={
+                'phone_number': openapi.Schema(type=openapi.TYPE_STRING, example="+998901234567"),
+                'otp': openapi.Schema(type=openapi.TYPE_STRING, example="123456"),
+                'name': openapi.Schema(type=openapi.TYPE_STRING, example="Ali Valiyev"),
+                'password': openapi.Schema(type=openapi.TYPE_STRING, format='password', example="MySecret123"),
+            },
+        ),
+        responses={
+            201: openapi.Response('Foydalanuvchi muvaffaqiyatli ro\'yxatdan o\'tdi'),
+            400: openapi.Response('Xatolik: OTP noto‘g‘ri yoki muddati o‘tgan, yoki foydalanuvchi allaqachon mavjud')
+        }
+    )
+    def post(self, request):
+        phone = request.data.get('phone_number')
+        code = request.data.get('otp')
         name = request.data.get('name')
         password = request.data.get('password')
 
-        if CustomUser.objects.filter(phone_number=phone).exists():
-            return Response({'error': 'Phone number already exists'}, status=status.HTTP_400_BAD_REQUEST)
+        otp_obj = OTPCode.objects.filter(phone_number=phone, code=code, is_used=False).last()
 
-        user = CustomUser(phone_number=phone, name=name)
+        if not otp_obj or otp_obj.is_expired():
+            return Response({'error': 'OTP is invalid or expired'}, status=400)
+
+        if CustomUser.objects.filter(phone_number=phone).exists():
+            return Response({'error': 'User already exists'}, status=400)
+
+        user = CustomUser.objects.create(phone_number=phone, name=name)
         user.set_password(password)
         user.save()
 
-        return Response({'message': 'User created successfully'}, status=status.HTTP_201_CREATED)
+        otp_obj.is_used = True
+        otp_obj.save()
+
+        return Response({'message': 'User registered successfully'}, status=201)
 
 
 class LoginView(APIView):
     @swagger_auto_schema(
+        operation_summary="Login",
+        operation_description="Foydalanuvchini telefon raqami va paroli orqali tizimga kiritadi. Muvaffaqiyatli login bo‘lsa, access va refresh token qaytariladi.",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'phone_number': openapi.Schema(type=openapi.TYPE_STRING),
-                'password': openapi.Schema(type=openapi.TYPE_STRING),
+                'phone_number': openapi.Schema(type=openapi.TYPE_STRING, example="+998901234567"),
+                'password': openapi.Schema(type=openapi.TYPE_STRING, example="your_password"),
             },
             required=['phone_number', 'password']
         ),
+        responses={
+            200: openapi.Response(
+                description="Login successful",
+                examples={
+                    "application/json": {
+                        "message": "Login successful",
+                        "access": "your_access_token",
+                        "refresh": "your_refresh_token"
+                    }
+                }
+            ),
+            401: openapi.Response(
+                description="Invalid credentials",
+                examples={
+                    "application/json": {
+                        "error": "Invalid credentials"
+                    }
+                }
+            )
+        }
     )
     def post(self, request):
         phone = request.data.get('phone_number')
@@ -65,7 +135,7 @@ class LoginView(APIView):
                 'message': 'Login successful',
                 'access': access,
                 'refresh': refresh
-            })
+            }, status=status.HTTP_200_OK)
 
         return Response({'error': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -74,6 +144,102 @@ class LogoutView(APIView):
         logout(request)
         return Response({'detail': 'Logout successful'}, status=status.HTTP_200_OK)
 
+class ForgotPasswordRequestOTPView(APIView):
+    @swagger_auto_schema(
+        operation_summary="Parolni tiklash uchun OTP yuborish",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'phone_number': openapi.Schema(type=openapi.TYPE_STRING, example="+998901234567"),
+            },
+            required=['phone_number']
+        ),
+        responses={
+            200: openapi.Response(description="OTP yuborildi"),
+            404: openapi.Response(description="Foydalanuvchi topilmadi")
+        }
+    )
+    def post(self, request):
+        phone = request.data.get('phone_number')
+        user = CustomUser.objects.filter(phone_number=phone).first()
+
+        if not user:
+            return Response({"error": "Foydalanuvchi topilmadi"}, status=404)
+
+        otp = generate_otp()
+        save_otp_to_cache(phone, otp)
+
+        print(f"🔐 OTP for password reset: {otp}")
+
+        return Response({"message": "OTP yuborildi"}, status=200)
+    
+class ForgotPasswordVerifyOTPAndSetNewPasswordView(APIView):
+    
+    @swagger_auto_schema(
+        operation_summary="OTP orqali parolni yangilash",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'phone_number': openapi.Schema(type=openapi.TYPE_STRING, example="+998901234567"),
+                'otp': openapi.Schema(type=openapi.TYPE_STRING, example="1234"),
+                'new_password': openapi.Schema(type=openapi.TYPE_STRING, example="newsecurepassword"),
+            },
+            required=['phone_number', 'otp', 'new_password']
+        ),
+        responses={
+            200: openapi.Response(description="Parol muvaffaqiyatli yangilandi"),
+            400: openapi.Response(description="OTP noto‘g‘ri yoki vaqt tugagan")
+        }
+    )
+    def post(self, request):
+        phone = request.data.get('phone_number')
+        otp = request.data.get('otp')
+        new_password = request.data.get('new_password')
+
+        user = CustomUser.objects.filter(phone_number=phone).first()
+        if not user:
+            return Response({"error": "Foydalanuvchi topilmadi"}, status=404)
+
+        from .utils import verify_otp_from_cache
+        if not verify_otp_from_cache(phone, otp):
+            return Response({"error": "OTP noto‘g‘ri yoki vaqt tugagan"}, status=400)
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response({"message": "Parol muvaffaqiyatli yangilandi"}, status=200)
+
+
+class UpdatePasswordView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_summary="Login bo‘lgan foydalanuvchi parolni yangilaydi",
+        request_body=openapi.Schema(
+            type=openapi.TYPE_OBJECT,
+            properties={
+                'old_password': openapi.Schema(type=openapi.TYPE_STRING),
+                'new_password': openapi.Schema(type=openapi.TYPE_STRING),
+            },
+            required=['old_password', 'new_password']
+        ),
+        responses={
+            200: openapi.Response(description="Parol yangilandi"),
+            400: openapi.Response(description="Eski parol noto‘g‘ri")
+        }
+    )
+    def post(self, request):
+        user = request.user
+        old_password = request.data.get('old_password')
+        new_password = request.data.get('new_password')
+
+        if not user.check_password(old_password):
+            return Response({"error": "Eski parol noto‘g‘ri"}, status=400)
+
+        user.set_password(new_password)
+        user.save()
+
+        return Response({"message": "Parol yangilandi"}, status=200)
 
 
 class CategoryViewSet(viewsets.ViewSet):
