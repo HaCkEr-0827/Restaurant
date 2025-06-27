@@ -54,13 +54,22 @@ class BookingSerializer(serializers.ModelSerializer):
 
 # 🔹 7. OrderItem (read)
 class OrderItemSerializer(serializers.ModelSerializer):
-    item = serializers.StringRelatedField()
+    item_name = serializers.CharField(source='item.name', read_only=True)
+    table = serializers.SerializerMethodField()
 
     class Meta:
         model = OrderItem
-        fields = ['id', 'item', 'quantity']
+        fields = ['id', 'order', 'item', 'item_name', 'quantity', 'table']
 
-
+    def get_table(self, obj):
+        if obj.order and obj.order.table:
+            return {
+                'id': obj.order.table.id,
+                'number': obj.order.table.number,
+                'hall': obj.order.table.hall.name
+            }
+        return None
+    
 # 🔹 8. Order (read)
 class OrderSerializer(serializers.ModelSerializer):
     user = serializers.StringRelatedField()

@@ -478,24 +478,38 @@ class BookingViewSet(viewsets.ViewSet):
         return Response(status=status.HTTP_204_NO_CONTENT)
     
 
+
 class OrderViewSet(viewsets.ViewSet):
     permission_classes = [IsAuthenticated]
 
-    @swagger_auto_schema(responses={200: OrderSerializer(many=True)})
+    @swagger_auto_schema(
+        operation_description="Foydalanuvchining barcha buyurtmalarini qaytaradi (admin bo‘lsa — hammasi)",
+        responses={200: OrderSerializer(many=True)}
+    )
     def list(self, request):
-        orders = Order.objects.filter(user=request.user)
+        if request.user.role == 'admin' or request.user.is_staff:
+            orders = Order.objects.all()
+        else:
+            orders = Order.objects.filter(user=request.user)
         serializer = OrderSerializer(orders, many=True)
         return Response(serializer.data)
 
-    @swagger_auto_schema(responses={200: OrderSerializer()})
+    @swagger_auto_schema(
+        operation_description="Muayyan buyurtmani ID orqali ko‘rish (admin hammasini ko‘ra oladi)",
+        responses={200: OrderSerializer(), 404: 'Not found'}
+    )
     def retrieve(self, request, pk=None):
-        order = get_object_or_404(Order, pk=pk, user=request.user)
+        if request.user.role == 'admin' or request.user.is_staff:
+            order = get_object_or_404(Order, pk=pk)
+        else:
+            order = get_object_or_404(Order, pk=pk, user=request.user)
         serializer = OrderSerializer(order)
         return Response(serializer.data)
 
     @swagger_auto_schema(
+        operation_description="Yangi buyurtma yaratish",
         request_body=OrderCreateSerializer,
-        responses={201: OrderSerializer()}
+        responses={201: OrderSerializer(), 400: 'Validation error'}
     )
     def create(self, request):
         serializer = OrderCreateSerializer(data=request.data, context={'request': request})
@@ -505,30 +519,46 @@ class OrderViewSet(viewsets.ViewSet):
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
     @swagger_auto_schema(
+        operation_description="Buyurtma statusini o‘zgartirish (admin hammasini o‘zgartira oladi)",
         request_body=openapi.Schema(
             type=openapi.TYPE_OBJECT,
             properties={
-                'status': openapi.Schema(type=openapi.TYPE_STRING, enum=["pending", "approved", "rejected"])
+                'status': openapi.Schema(
+                    type=openapi.TYPE_STRING,
+                    enum=["pending", "approved", "rejected"]
+                )
             },
             required=["status"]
         ),
-        responses={200: OrderSerializer()}
+        responses={200: OrderSerializer(), 400: 'Invalid status', 404: 'Not found'}
     )
     def update(self, request, pk=None):
-        order = get_object_or_404(Order, pk=pk, user=request.user)
+        if request.user.role == 'admin' or request.user.is_staff:
+            order = get_object_or_404(Order, pk=pk)
+        else:
+            order = get_object_or_404(Order, pk=pk, user=request.user)
+
         status_value = request.data.get("status")
         if status_value not in ["pending", "approved", "rejected"]:
             return Response({"error": "Noto‘g‘ri status"}, status=400)
+
         order.status = status_value
         order.save()
         print(f"📩 Bildirishnoma: Buyurtma holati o‘zgardi → {order.status}")
         return Response(OrderSerializer(order).data)
 
-    @swagger_auto_schema(responses={204: 'Deleted'})
+    @swagger_auto_schema(
+        operation_description="Buyurtmani o‘chirish (admin hammasini o‘chira oladi)",
+        responses={204: 'Deleted', 404: 'Not found'}
+    )
     def destroy(self, request, pk=None):
-        order = get_object_or_404(Order, pk=pk, user=request.user)
+        if request.user.role == 'admin' or request.user.is_staff:
+            order = get_object_or_404(Order, pk=pk)
+        else:
+            order = get_object_or_404(Order, pk=pk, user=request.user)
         order.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
     
 class ProfileView(APIView):
     permission_classes = [IsAuthenticated]

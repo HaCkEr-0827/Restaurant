@@ -41,8 +41,8 @@ urlpatterns = [
     path('token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('token/verify/', TokenVerifyView.as_view(), name='token_verify'),
-    path('request-otp/', ForgotPasswordRequestOTPView.as_view(), name='forgot-password-otp'),
-    path('verify-reset/', ForgotPasswordVerifyOTPAndSetNewPasswordView.as_view(), name='verify-password-reset'),
+    path('request-otp-password/', ForgotPasswordRequestOTPView.as_view(), name='forgot-password-otp'),
+    path('verify-password/', ForgotPasswordVerifyOTPAndSetNewPasswordView.as_view(), name='verify-password-reset'),
     path('update/', UpdatePasswordView.as_view(), name='update-password'),
     
       # Category
